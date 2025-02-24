@@ -355,13 +355,11 @@
 
 # if __name__ == '__main__':
 #     main()
-
-
-
 import logging
 import psycopg2
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackContext, Filters, ConversationHandler
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackContext, Filters
+from telegram.update import Update
 from datetime import datetime
 
 # Logging
@@ -373,9 +371,6 @@ TOKEN = '7675190858:AAGGJKFuDeL5IsM6TXPW3GW9I1X0EUzkQEY'
 ADMIN_ID = ["1926076672"]
 CHANNEL = "kinolar_kanali_top"
 KINO_CHANNEL = "kinolaruzrushind"
-
-# States
-WAITING_FOR_VIDEO = 1
 
 # PostgreSQL Connection
 try:
@@ -404,8 +399,16 @@ if conn:
         id SERIAL PRIMARY KEY,
         code VARCHAR(100),
         file_name VARCHAR(200),
-        file_id VARCHAR(200)
+        file_id VARCHAR(200),
+        link VARCHAR(300)
     )""")
+    
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='data' AND column_name='link'")
+    if not cursor.fetchone():
+        cursor.execute("ALTER TABLE data ADD COLUMN link TEXT;")
+        conn.commit()
+        logger.info("Link ustuni qo‘shildi.")
+
     conn.commit()
 
 # Check DB Connection
@@ -453,8 +456,8 @@ def start(update: Update, context: CallbackContext):
     keyboard = [[InlineKeyboardButton("🔎 Kodlarni qidirish", url=f"https://t.me/{KINO_CHANNEL}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     update.message.reply_text(
-        f"👋 <b>Salom {name}!</b>\n\n<i>Marhamat, kerakli kodni yuboring:</i>", 
-        parse_mode='HTML', 
+        f"👋 <b>Salom {name}!</b>\n\n<i>Marhamat, kerakli kodni yuboring:</i>",
+        parse_mode='HTML',
         reply_markup=reply_markup
     )
 
@@ -463,68 +466,65 @@ def add_kino(update: Update, context: CallbackContext):
     user_id = str(update.effective_user.id)
     if user_id not in ADMIN_ID:
         update.message.reply_text("⛔ Sizda bu buyruqni bajarishga ruxsat yo‘q.")
-        return ConversationHandler.END
+        return
 
     if not context.args or len(context.args) < 1:
-        update.message.reply_text("⚠️ Kino kodi yuboring.\nMisol: /add_kino 12345")
-        return ConversationHandler.END
+        update.message.reply_text("⚠️ Kino kodi va faylni yuboring.\nMisol: /add_kino 12345")
+        return
 
-    context.user_data['code'] = context.args[0]
-    update.message.reply_text("⚠️ Iltimos, kino videosini yuboring.")
-    return WAITING_FOR_VIDEO
-
-# Handle Video
-def handle_video(update: Update, context: CallbackContext):
-    code = context.user_data.get('code')
-    if not code:
-        update.message.reply_text("⚠️ Avval kino kodini yuboring. Misol: /add_kino 12345")
-        return ConversationHandler.END
-
+    code = context.args[0]
     if update.message.video:
         file_id = update.message.video.file_id
         file_name = update.message.video.file_name or "Noma'lum"
+        link = f"https://t.me/{KINO_CHANNEL}/{file_id}"
 
-        cursor.execute("INSERT INTO data (code, file_name, file_id) VALUES (%s, %s, %s)", (code, file_name, file_id))
+        cursor.execute("INSERT INTO data (code, file_name, file_id, link) VALUES (%s, %s, %s, %s)", (code, file_name, file_id, link))
         conn.commit()
 
-        sent_message = context.bot.send_video(
-            chat_id=f"@{KINO_CHANNEL}",
-            video=file_id,
-            caption=f"🎬 {file_name}\n\n<b>Kino kodi:</b> <code>{code}</code>",
-            parse_mode='HTML'
-        )
-
-        update.message.reply_text(
-            f"✅ Kino bazaga va kanalda yuborildi!\n\n<b>Kod:</b> {code}\n<b>Fayl:</b> {file_name}\n<b>Kanal post:</b> <a href='https://t.me/{KINO_CHANNEL}/{sent_message.message_id}'>Ko‘rish</a>",
-            parse_mode='HTML'
-        )
+        update.message.reply_text(f"✅ Kino bazaga qo‘shildi!\n\n<b>Kod:</b> {code}\n<b>Fayl:</b> {file_name}", parse_mode='HTML')
     else:
         update.message.reply_text("⚠️ Iltimos, kino videosini yuboring.")
 
-    return ConversationHandler.END
+# Message Handler for Codes
+def handle_message(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    text = update.message.text
 
-# Cancel Handler
-def cancel(update: Update, context: CallbackContext):
-    update.message.reply_text("❌ Amaliyot bekor qilindi.")
-    return ConversationHandler.END
+    if text.isdigit():
+        cursor.execute("SELECT file_name, file_id FROM data WHERE code = %s", (text,))
+        result = cursor.fetchone()
+        if result:
+            file_name, file_id = result
+            context.bot.send_video(chat_id=update.effective_chat.id, video=file_id, caption=f"🎬 {file_name}")
+        else:
+            update.message.reply_text(f"{text} <b>mavjud emas!</b>\n\nQayta urinib ko'ring:", parse_mode='HTML')
+    else:
+        update.message.reply_text("<b>Faqat raqamlardan foydalaning!</b>", parse_mode='HTML')
+
+# Admin Command: /stat
+def stat(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if str(user_id) not in ADMIN_ID:
+        return
+
+    cursor.execute("SELECT COUNT(*) FROM user_id")
+    user_count = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM data")
+    kino_count = cursor.fetchone()[0]
+
+    update.message.reply_text(f"• <b>Foydalanuvchilar:</b> {user_count} ta\n• <b>Yuklangan kinolar:</b> {kino_count} ta", parse_mode='HTML')
 
 # Main Function
 def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
-    # Handlers
     dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("stat", stat))
+    dp.add_handler(CommandHandler("add_kino", add_kino))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('add_kino', add_kino)],
-        states={
-            WAITING_FOR_VIDEO: [MessageHandler(Filters.video, handle_video)]
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-
-    dp.add_handler(conv_handler)
     updater.start_polling()
     updater.idle()
 
