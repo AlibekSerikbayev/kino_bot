@@ -355,6 +355,9 @@
 
 # if __name__ == '__main__':
 #     main()
+
+
+
 import logging
 import psycopg2
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -468,34 +471,45 @@ def add_kino(update: Update, context: CallbackContext):
         update.message.reply_text("⛔ Sizda bu buyruqni bajarishga ruxsat yo‘q.")
         return
 
-    if not context.args or len(context.args) < 1:
-        update.message.reply_text("⚠️ Kino kodi va faylni yuboring.\nMisol: /add_kino 12345")
+    if len(context.args) < 2:
+        update.message.reply_text("⚠️ Kino kodi va linkini yuboring.\nMisol: /add_kino 12345 https://t.me/kinolar_kanali_top/233")
         return
 
     code = context.args[0]
-    if update.message.video:
-        file_id = update.message.video.file_id
-        file_name = update.message.video.file_name or "Noma'lum"
-        link = f"https://t.me/{KINO_CHANNEL}/{file_id}"
+    link = context.args[1]
+    file_name = f"Kino {code}"
 
-        cursor.execute("INSERT INTO data (code, file_name, file_id, link) VALUES (%s, %s, %s, %s)", (code, file_name, file_id, link))
-        conn.commit()
+    cursor.execute("INSERT INTO data (code, file_name, file_id, link) VALUES (%s, %s, %s, %s)", (code, file_name, '', link))
+    conn.commit()
 
-        update.message.reply_text(f"✅ Kino bazaga qo‘shildi!\n\n<b>Kod:</b> {code}\n<b>Fayl:</b> {file_name}", parse_mode='HTML')
-    else:
-        update.message.reply_text("⚠️ Iltimos, kino videosini yuboring.")
+    update.message.reply_text(f"✅ Kino bazaga qo‘shildi!\n\n<b>Kod:</b> {code}\n<b>Link:</b> {link}", parse_mode='HTML')
 
 # Message Handler for Codes
 def handle_message(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
+
+    if not is_user_subscribed(context, user_id):
+        update.message.reply_text(
+            f"🔒 <a href='https://t.me/{CHANNEL}'>Kanalga</a> obuna bo'lmasangiz botdan to'liq foydalana olmaysiz!",
+            parse_mode='HTML'
+        )
+        return
+
     text = update.message.text
 
     if text.isdigit():
-        cursor.execute("SELECT file_name, file_id FROM data WHERE code = %s", (text,))
+        cursor.execute("SELECT file_name, link FROM data WHERE code = %s", (text,))
         result = cursor.fetchone()
         if result:
-            file_name, file_id = result
-            context.bot.send_video(chat_id=update.effective_chat.id, video=file_id, caption=f"🎬 {file_name}")
+            file_name, link = result
+            keyboard = [[InlineKeyboardButton("🎬 Kinoni ko'rish", url=link)]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"🎬 {file_name}\n📥 Kinoni ko'rish uchun pastdagi tugmani bosing:",
+                parse_mode='HTML',
+                reply_markup=reply_markup
+            )
         else:
             update.message.reply_text(f"{text} <b>mavjud emas!</b>\n\nQayta urinib ko'ring:", parse_mode='HTML')
     else:
